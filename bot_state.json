@@ -1,0 +1,7 @@
+{
+    "battery_monitoring_enabled": true,
+    "battery_low_notified": false,
+    "battery_full_notified": false,
+    "battery_unavailable_notified": false,
+    "battery_check_error_notified": false
+}

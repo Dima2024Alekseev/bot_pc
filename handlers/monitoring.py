@@ -1,22 +1,35 @@
+# handlers/monitoring.py
 import logging
 import psutil
 import platform
-import subprocess
 import asyncio
-
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime, timedelta
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton # Добавлены InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes
-from telegram.helpers import escape_markdown
-
 from utils.decorators import restricted
+import time
+from telegram.helpers import escape_markdown # Добавлен escape_markdown
+from utils.state_manager import save_bot_state # Добавлен save_bot_state
+
+# Проверка доступности модулей для скриншотов
+try:
+    import pyautogui
+    from PIL import Image
+    SCREENSHOT_AVAILABLE = True
+except ImportError:
+    SCREENSHOT_AVAILABLE = False
+    logging.warning("Функция скриншотов недоступна - отсутствуют зависимости (pyautogui, Pillow)")
+
+# Проверка доступности модулей для батареи
+try:
+    import psutil
+    BATTERY_AVAILABLE = True
+except ImportError:
+    BATTERY_AVAILABLE = False
+    logging.warning("Функция мониторинга батареи недоступна - отсутствует зависимость (psutil)")
+
 
 logger = logging.getLogger(__name__)
-
-# Ваши существующие глобальные переменные для отслеживания состояния уведомлений батареи
-# <--- ЭТИ СТРОКИ БЫЛИ УДАЛЕНЫ, ПОСКОЛЬКУ СОСТОЯНИЕ ТЕПЕРЬ ХРАНИТСЯ В context.bot_data
-# battery_low_notified = False
-# battery_full_notified = False
-
 
 @restricted
 async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -37,21 +50,27 @@ async def system_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text(status_text, parse_mode='MarkdownV2')
 
-
 @restricted
 async def uptime(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Отправляет время работы системы (uptime)."""
-    boot_time = psutil.boot_time()
-    uptime_seconds = int(psutil.time.time() - boot_time)
+    """Выводит время работы системы."""
+    try:
+        boot_time_timestamp = psutil.boot_time()
+        boot_time = datetime.fromtimestamp(boot_time_timestamp)
+        current_time = datetime.now()
+        uptime_delta = current_time - boot_time
 
-    # Вычисляем время работы в днях, часах, минутах, секундах.
-    minutes, seconds = divmod(uptime_seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
+        days = uptime_delta.days
+        hours, remainder = divmod(uptime_delta.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
 
-    uptime_str = f"{days} дней, {hours} часов, {minutes} минут, {seconds} секунд"
-    await update.message.reply_text(f"⏱ *Время работы системы:*\n`{escape_markdown(uptime_str, version=2)}`", parse_mode='MarkdownV2')
-
+        uptime_message = (
+            f"⏱ *Время работы системы:*\n"
+            f"  `{days}` дней, `{hours:02}`:{minutes:02}:{seconds:02}"
+        )
+        await update.message.reply_text(uptime_message, parse_mode='MarkdownV2')
+    except Exception as e:
+        logger.error(f"Ошибка при получении времени работы: {e}")
+        await update.message.reply_text(f"❌ Ошибка при получении времени работы: {e}")
 
 @restricted
 async def list_processes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -136,100 +155,102 @@ async def list_processes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.error(f"Не удалось отредактировать сообщение с ошибкой: {edit_error}")
             await context.bot.send_message(chat_id=chat_id, text=error_message, parse_mode='MarkdownV2')
 
-
 @restricted
 async def check_process_running(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Проверяет, запущен ли процесс по имени."""
     if not context.args:
-        await update.message.reply_text(
-            "Пожалуйста, укажите имя процесса: `/is_running` \\[имя\\_процесса\\]",
-            parse_mode='MarkdownV2'
-        )
+        await update.message.reply_text("Использование: `/is_running <имя_приложения>`", parse_mode='MarkdownV2')
         return
 
-    process_name = " ".join(context.args).lower()
+    process_name = ' '.join(context.args).lower()
     found = False
-    for proc in psutil.process_iter(['name']):
-        # Проверяем, содержит ли имя процесса (без учета регистра) указанное имя
-        if proc.info['name'] and process_name in proc.info['name'].lower():
+    for p in psutil.process_iter(['name']):
+        if process_name in p.info['name'].lower():
             await update.message.reply_text(
-                f"✅ Процесс `{escape_markdown(proc.info['name'], version=2)}` \\(PID: `{proc.pid}`\\) запущен\\.",
+                f"✅ Процесс `{p.info['name']}` \\(PID: `{p.pid}`\\) *запущен*\\.",
                 parse_mode='MarkdownV2'
             )
             found = True
             break
     if not found:
         await update.message.reply_text(
-            f"❌ Процесс `{escape_markdown(process_name, version=2)}` не найден\\.",
+            f"❌ Процесс `{process_name}` *не найден*\\.",
             parse_mode='MarkdownV2'
         )
-
 
 @restricted
 async def kill_process_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Запрашивает PID для завершения процесса и подтверждение."""
+    """Завершает процесс по PID с подтверждением."""
     if not context.args:
-        await update.message.reply_text(
-            "Пожалуйста, укажите PID процесса для завершения: `/kill_process` \\[PID\\]",
-            parse_mode='MarkdownV2'
-        )
+        await update.message.reply_text("Использование: `/kill_process <PID>`", parse_mode='MarkdownV2')
         return
 
     try:
-        pid_to_kill = int(context.args[0])
-        process_name = ""
+        pid = int(context.args[0])
+        context.user_data['kill_pid'] = pid
+        
         try:
-            p = psutil.Process(pid_to_kill)
-            process_name = p.name()
+            process = psutil.Process(pid)
+            process_info = f"Процесс: `{process.name()}` \\(PID: `{pid}`\\)"
         except psutil.NoSuchProcess:
-            await update.message.reply_text(f"❌ Процесс с PID `{pid_to_kill}` не найден\\.", parse_mode='MarkdownV2')
-            return
+            process_info = f"PID: `{pid}` (Процесс не найден или уже завершен)"
 
-        # Сохраняем PID в user_data для последующего использования в inline_button_handler.
-        context.user_data['kill_pid'] = pid_to_kill
-        # Создаем inline-клавиатуру для подтверждения.
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Подтвердить", callback_data="confirm_kill")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да", callback_data="confirm_kill")],
+            [InlineKeyboardButton("❌ Нет", callback_data="cancel")]
         ])
         await update.message.reply_text(
-            f"⚠️ Вы уверены, что хотите завершить процесс `{escape_markdown(process_name, version=2)}` \\(PID: `{pid_to_kill}`\\)\\?",
-            reply_markup=keyboard,
+            f"⚠️ Вы уверены, что хотите завершить {process_info}?",
+            reply_markup=reply_markup,
             parse_mode='MarkdownV2'
         )
-    except ValueError:
-        await update.message.reply_text("❌ Пожалуйста, введите корректный PID \\(число\\)\\.", parse_mode='MarkdownV2')
-    except Exception as e:
-        logger.error(f"Ошибка в kill_process_command: {e}")
-        await update.message.reply_text(f"❌ Произошла ошибка: `{escape_markdown(str(e), version=2)}`", parse_mode='MarkdownV2')
 
-async def execute_kill_process(update: Update, context: ContextTypes.DEFAULT_TYPE, pid_to_kill: int) -> None:
-    """Выполняет завершение процесса по PID."""
+    except ValueError:
+        await update.message.reply_text("❌ PID должен быть числом\\.", parse_mode='MarkdownV2')
+    except Exception as e:
+        logger.error(f"Ошибка при подготовке завершения процесса: {e}")
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+async def execute_kill_process(update: Update, context: ContextTypes.DEFAULT_TYPE, pid: int) -> None:
+    """Выполняет завершение процесса после подтверждения."""
     try:
-        p = psutil.Process(pid_to_kill)
-        process_name = p.name()
-        p.terminate() # Попытка завершить процесс
-        await update.callback_query.edit_message_text(
-            f"✅ Процесс `{escape_markdown(process_name, version=2)}` \\(PID: `{pid_to_kill}`\\) успешно завершен\\.",
-            parse_mode='MarkdownV2'
-        )
+        process = psutil.Process(pid)
+        process_name = process.name()
+        process.terminate()
+        process.wait(timeout=3)
+
+        if process.is_running():
+            process.kill()
+            await update.callback_query.edit_message_text(
+                f"☠️ Процесс `{process_name}` \\(PID: `{pid}`\\) *был принудительно завершен*\\.",
+                parse_mode='MarkdownV2'
+            )
+            logger.info(f"Процесс {process_name} (PID: {pid}) принудительно завершен.")
+        else:
+            await update.callback_query.edit_message_text(
+                f"✅ Процесс `{process_name}` \\(PID: `{pid}`\\) *успешно завершен*\\.",
+                parse_mode='MarkdownV2'
+            )
+            logger.info(f"Процесс {process_name} (PID: {pid}) успешно завершен.")
+
     except psutil.NoSuchProcess:
         await update.callback_query.edit_message_text(
-            f"❌ Процесс с PID `{pid_to_kill}` уже не существует\\.",
+            f"❌ Процесс с PID `{pid}` *не найден или уже завершен*\\.",
             parse_mode='MarkdownV2'
         )
+        logger.warning(f"Попытка завершить несуществующий процесс PID: {pid}")
     except psutil.AccessDenied:
         await update.callback_query.edit_message_text(
-            f"❌ Отказано в доступе к завершению процесса с PID `{pid_to_kill}`\\. Возможно, требуются права администратора\\.",
+            f"❌ Отказано в доступе для завершения процесса с PID `{pid}`\\.",
             parse_mode='MarkdownV2'
         )
+        logger.error(f"Отказано в доступе при завершении процесса PID: {pid}")
     except Exception as e:
-        logger.error(f"Ошибка при завершении процесса PID {pid_to_kill}: {e}")
+        logger.error(f"Ошибка при завершении процесса PID {pid}: {e}")
         await update.callback_query.edit_message_text(
-            f"❌ Не удалось завершить процесс с PID `{pid_to_kill}`: `{escape_markdown(str(e), version=2)}`",
+            f"❌ Неизвестная ошибка при завершении процесса `{pid}`: {escape_markdown(str(e), version=2)}",
             parse_mode='MarkdownV2'
         )
-
 
 @restricted
 async def battery_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -270,83 +291,69 @@ async def battery_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def check_battery_level(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Периодически проверяет уровень заряда батареи и отправляет уведомления."""
-    # <--- ИЗМЕНЕНО: Теперь получаем значения из context.bot_data
-    # Если их нет, используем False по умолчанию
-    battery_low_notified = context.bot_data.get('battery_low_notified', False)
-    battery_full_notified = context.bot_data.get('battery_full_notified', False)
-
+    """
+    Периодическая проверка уровня заряда батареи.
+    Отправляет уведомления при низком заряде, полном заряде или недоступности.
+    Флаги уведомлений теперь хранятся в context.bot_data.
+    """
     chat_id = context.job.data['chat_id']
-    
-    # Проверка актуальна только для Windows. Если ОС не Windows, отключаем задачу.
-    if platform.system() != "Windows":
-        if not context.user_data.get('battery_not_windows_notified', False):
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="ℹ️ Автоматическая проверка батареи доступна только для Windows\\. Отключение функции\\.",
-                parse_mode='MarkdownV2'
-            )
-            context.user_data['battery_not_windows_notified'] = True
-        context.job.schedule_removal() # Удаляем задачу, если ОС не Windows
-        return
+
+    if 'battery_low_notified' not in context.bot_data:
+        context.bot_data['battery_low_notified'] = False
+    if 'battery_full_notified' not in context.bot_data:
+        context.bot_data['battery_full_notified'] = False
+    if 'battery_unavailable_notified' not in context.bot_data:
+        context.bot_data['battery_unavailable_notified'] = False
+    if 'battery_check_error_notified' not in context.bot_data:
+        context.bot_data['battery_check_error_notified'] = False
 
     try:
+        if not BATTERY_AVAILABLE:
+            if not context.bot_data['battery_unavailable_notified']:
+                await context.bot.send_message(chat_id=chat_id, text="❌ Автоматический мониторинг батареи: модуль `psutil` не установлен.")
+                context.bot_data['battery_unavailable_notified'] = True
+                save_bot_state(context.bot_data)
+            return
+
         battery = psutil.sensors_battery()
-        if battery:
-            current_percent = battery.percent
-            power_plugged = battery.power_plugged
 
-            # Уведомление о низком заряде
-            if current_percent <= 20 and not power_plugged and not battery_low_notified:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"🚨 *Внимание: Низкий заряд батареи* `{current_percent:.1f}%`\\! Подключите зарядное устройство\\.",
-                    parse_mode='MarkdownV2'
-                )
-                # <--- ИЗМЕНЕНО: Сохраняем флаги в context.bot_data
-                context.bot_data['battery_low_notified'] = True
-                context.bot_data['battery_full_notified'] = False # Сбрасываем флаг полной батареи
+        if battery is None:
+            if not context.bot_data['battery_unavailable_notified']:
+                await context.bot.send_message(chat_id=chat_id, text="ℹ️ Автоматический мониторинг батареи: Информация о батарее недоступна. (Настольный ПК?)")
+                context.bot_data['battery_unavailable_notified'] = True
+                context.bot_data['battery_check_error_notified'] = False
+                save_bot_state(context.bot_data)
+            return
+        
+        context.bot_data['battery_unavailable_notified'] = False
+        context.bot_data['battery_check_error_notified'] = False
 
-            # Уведомление о полном заряде
-            elif current_percent >= 99 and power_plugged and not battery_full_notified:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"✅ *Батарея полностью заряжена* `{current_percent:.1f}%`\\! Можно отключить зарядное устройство\\.",
-                    parse_mode='MarkdownV2'
-                )
-                # <--- ИЗМЕНЕНО: Сохраняем флаги в context.bot_data
-                context.bot_data['battery_full_notified'] = True
-                context.bot_data['battery_low_notified'] = False # Сбрасываем флаг низкого заряда
+        if battery.percent < 20 and not battery.power_plugged and not context.bot_data['battery_low_notified']:
+            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ *Внимание!* Низкий заряд батареи: `{battery.percent:.1f}%`\\. Подключите зарядное устройство\\.", parse_mode='MarkdownV2')
+            context.bot_data['battery_low_notified'] = True
+            context.bot_data['battery_full_notified'] = False
+            save_bot_state(context.bot_data)
+            logger.info(f"Отправлено уведомление о низком заряде батареи: {battery.percent}%")
+        elif battery.percent >= 25 and context.bot_data['battery_low_notified']:
+            context.bot_data['battery_low_notified'] = False
+            save_bot_state(context.bot_data)
 
-            # Сброс флагов уведомлений, когда условия перестают выполняться
-            elif current_percent > 20 and battery_low_notified:
-                # <--- ИЗМЕНЕНО: Сбрасываем флаг в context.bot_data
-                context.bot_data['battery_low_notified'] = False
-            elif current_percent < 99 and battery_full_notified:
-                # <--- ИЗМЕНЕНО: Сбрасываем флаг в context.bot_data
-                context.bot_data['battery_full_notified'] = False
-
-        else:
-            # Если информация о батарее недоступна (например, на десктопе без батареи),
-            # уведомляем один раз и отключаем периодическую проверку.
-            if not context.user_data.get('battery_unavailable_notified', False):
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text="❌ Информация о батарее недоступна\\. Отключение автоматической проверки\\.",
-                    parse_mode='MarkdownV2'
-                )
-                context.user_data['battery_unavailable_notified'] = True
-            context.job.schedule_removal() # Удаляем задачу, если батарея недоступна
-            logger.warning("Информация о батарее недоступна. Автоматическая проверка отключена.")
+        if battery.percent > 95 and battery.power_plugged and not context.bot_data['battery_full_notified']:
+            await context.bot.send_message(chat_id=chat_id, text=f"✅ Батарея заряжена до `{battery.percent:.1f}%`\\. Можно отключить зарядное устройство\\.", parse_mode='MarkdownV2')
+            context.bot_data['battery_full_notified'] = True
+            context.bot_data['battery_low_notified'] = False
+            save_bot_state(context.bot_data)
+            logger.info(f"Отправлено уведомление о полном заряде батареи: {battery.percent}%")
+        elif battery.percent < 90 and context.bot_data['battery_full_notified']:
+            context.bot_data['battery_full_notified'] = False
+            save_bot_state(context.bot_data)
 
     except Exception as e:
-        logger.error(f"Ошибка при автоматической проверке батареи: {e}")
-        # Уведомляем об ошибке и отключаем мониторинг, чтобы избежать повторяющихся ошибок.
-        if not context.user_data.get('battery_check_error_notified', False):
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text=f"⚠️ Произошла ошибка при автоматической проверке батареи: `{escape_markdown(str(e), version=2)}`\\. Отключение функции\\.",
-                parse_mode='MarkdownV2'
-            )
-            context.user_data['battery_check_error_notified'] = True
-        context.job.schedule_removal() # Удаляем задачу при ошибке
+        logger.error(f"Ошибка в автоматической проверке батареи: {e}")
+        if not context.bot_data['battery_check_error_notified']:
+            await context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка при автоматической проверке батареи: {e}")
+            context.bot_data['battery_check_error_notified'] = True
+            save_bot_state(context.bot_data)
+        context.bot_data['battery_low_notified'] = False
+        context.bot_data['battery_full_notified'] = False
+        context.bot_data['battery_unavailable_notified'] = False
