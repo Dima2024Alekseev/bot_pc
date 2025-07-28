@@ -1,7 +1,9 @@
 import logging
-import subprocess
+import subprocess # Добавлено для запуска игр
 import platform
-import os
+import os # Добавлено для проверки существования пути
+import asyncio
+
 from datetime import datetime, timedelta
 
 from telegram import (
@@ -20,7 +22,8 @@ from keyboards import (
     get_control_keyboard,
     get_security_keyboard,
     get_confirmation_keyboard,
-    get_shutdown_timer_keyboard
+    get_shutdown_timer_keyboard,
+    get_game_keyboard # Импортируем новую клавиатуру
 )
 from utils.decorators import restricted
 
@@ -33,6 +36,15 @@ logger = logging.getLogger(__name__)
 
 # Ваш полученный file_id анимации
 ANIMATION_FILE_ID = "CgACAgIAAxkBAAIHzWiEpBDgtAJsQDpT6lPIN4lJVF6QAAI1dgACmrkpSF3sGXuJUNm4NgQ"
+
+# Словарь для хранения путей к играм
+# Используйте сырые строки (r"...") для путей Windows, чтобы избежать проблем с обратными слэшами
+GAME_PATHS = {
+    "🚛 Euro Truck Simulator 2": r"C:\Users\aleks\Desktop\GAME\(64х)Euro Truck Simulator 2.lnk",
+    "⚔️ Assassins Creed Brotherhood": r"C:\Users\aleks\Desktop\GAME\Assassins Creed Brotherhood.lnk",
+    "⚔️ Assassin's Creed Revelations": r"C:\Users\aleks\Desktop\GAME\Assassin's Creed.Revelations.v 1.03 + 6 DLC.lnk",
+}
+
 
 @restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -82,6 +94,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "\\- Блокировка: `/lock` или кнопка 🔒\n\n"
         "📷 *Скриншот:*\n"
         "\\- `/screenshot` или кнопка 📷\n\n"
+        "🎮 *Игры:*\n" # Добавлено
+        "\\- Запуск игр: кнопка 🎮\n\n" # Добавлено
         "🧹 *Очистка:*\n"
         "\\- `/clear_temp` или кнопка 🧹\n\n"
         "❌ *Отмена:*\n"
@@ -92,6 +106,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=get_main_keyboard(),
         parse_mode='MarkdownV2'
     )
+
+@restricted
+async def launch_game(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Запускает выбранную игру."""
+    game_name = update.message.text
+    game_path = GAME_PATHS.get(game_name)
+
+    if not game_path:
+        await update.message.reply_text("❌ Игра не найдена в списке.", reply_markup=get_game_keyboard())
+        return
+
+    if not platform.system() == "Windows":
+        await update.message.reply_text("❌ Запуск игр поддерживается только на Windows.", reply_markup=get_game_keyboard())
+        return
+    
+    if not os.path.exists(game_path):
+        await update.message.reply_text(f"❌ Путь к игре не найден: `{escape_markdown(game_path, version=2)}`", parse_mode='MarkdownV2', reply_markup=get_game_keyboard())
+        return
+
+    try:
+        # Для .lnk файлов на Windows лучше использовать start
+        subprocess.Popen(['start', '', game_path], shell=True)
+        await update.message.reply_text(f"🚀 Запускаю игру: *{escape_markdown(game_name, version=2)}*", parse_mode='MarkdownV2', reply_markup=get_game_keyboard())
+    except Exception as e:
+        logger.error(f"Ошибка при запуске игры {game_name} ({game_path}): {e}")
+        await update.message.reply_text(f"❌ Не удалось запустить игру: {escape_markdown(str(e), version=2)}", parse_mode='MarkdownV2', reply_markup=get_game_keyboard())
+
 
 @restricted
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -118,6 +159,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
     elif query == "📷 Скриншот":
         await screenshots.screenshot(update, context)
+    elif query == "🎮 Игровой режим": # НОВЫЙ ОБРАБОТЧИК ДЛЯ ИГРОВОГО РЕЖИМА
+        await update.message.reply_text(
+            "🎮 *Выберите игру для запуска\\:*\n" # "Выберите игру для запуска" будет ЖИРНЫМ, ":" будет обычным
+            "\\(_только для Windows_\\)", # "только для Windows" будет КУРСИВОМ, "()" будут обычными
+            reply_markup=get_game_keyboard(),
+            parse_mode='MarkdownV2'
+        )
     elif query == "❓ Помощь":
         await help_command(update, context)
     elif query == "📊 Статус системы":
@@ -152,6 +200,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "⚠️ Вы уверены, что хотите заблокировать компьютер?",
             reply_markup=get_confirmation_keyboard("lock")
         )
+    elif query in GAME_PATHS: # НОВЫЙ ОБРАБОТЧИК ДЛЯ КНОПОК ИГР
+        await launch_game(update, context)
     elif query == "🔙 Назад":
         await start(update, context)
 
@@ -181,7 +231,8 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
         if 'shutdown_timer' in context.user_data and context.user_data['shutdown_timer'] is not None:
             try:
-                if hasattr(context.user_data['shutdown_timer'], 'job'):
+                # ИСПРАВЛЕНО: Правильный метод для отмены Job
+                if hasattr(context.user_data['shutdown_timer'], 'job'): # Дополнительная проверка на случай, если это Job из старой версии PTB
                     context.user_data['shutdown_timer'].job.schedule_removal()
                 else:
                     context.user_data['shutdown_timer'].schedule_removal()
@@ -194,7 +245,7 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
             'chat_id': update.effective_chat.id,
             'message_id': query.message.message_id
         }
-       
+        
         context.user_data['shutdown_timer'] = context.job_queue.run_once(
             pc_control.shutdown_pc,
             seconds,
@@ -228,18 +279,36 @@ async def inline_button_handler(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Действие отменено")
         if 'shutdown_timer' in context.user_data and context.user_data['shutdown_timer'] is not None:
             try:
+                # ИСПРАВЛЕНО: Правильный метод для отмены Job
                 if hasattr(context.user_data['shutdown_timer'], 'job'):
                     context.user_data['shutdown_timer'].job.schedule_removal()
                 else:
                     context.user_data['shutdown_timer'].schedule_removal()
                 del context.user_data['shutdown_timer']
+
                 if platform.system() == "Windows":
-                    subprocess.run(["shutdown", "/a"], check=False)
+                    try:
+                        proc = await asyncio.create_subprocess_shell(
+                            "shutdown /a",
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            shell=True
+                        )
+                        stdout, stderr = await proc.communicate()
+                        
+                        decoded_stderr = stderr.decode('cp866', errors='replace')
+                        
+                        if proc.returncode != 0:
+                            logger.error(f"Ошибка отмены shutdown /a: {decoded_stderr}")
+                    except Exception as sub_e:
+                        logger.error(f"Ошибка при запуске shutdown /a: {sub_e}")
+
                 await query.message.reply_text('✅ Запланированное выключение отменено')
             except Exception as e:
                 logger.error(f"Ошибка при отмене таймера: {e}")
-                await query.message.reply_text(f"❌ Не удалось полностью отменить таймер: {escape_markdown(str(e), version=2)}")
+                await query.message.reply_text(f"❌ Ошибка при отмене: {escape_markdown(str(e), version=2)}")
         else:
             await query.message.reply_text('ℹ️ Нет активных таймеров выключения для отмены\\.', parse_mode='MarkdownV2')
     else:
         await query.message.reply_text('Неизвестное действие. Возвращаюсь в главное меню.', reply_markup=get_main_keyboard())
+

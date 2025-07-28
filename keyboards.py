@@ -5,7 +5,7 @@ def get_main_keyboard():
     keyboard = [
         [KeyboardButton("🖥 Мониторинг"), KeyboardButton("⚙️ Управление")],
         [KeyboardButton("🔐 Безопасность"), KeyboardButton("📷 Скриншот")],
-        [KeyboardButton("❓ Помощь")]
+        [KeyboardButton("🎮 Игровой режим"), KeyboardButton("❓ Помощь")] # Добавлена новая кнопка
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -13,7 +13,7 @@ def get_main_keyboard():
 def get_monitoring_keyboard():
     keyboard = [
         [KeyboardButton("📊 Статус системы"), KeyboardButton("⏱ Время работы")],
-        [KeyboardButton("📋 Список процессов"), KeyboardButton("🔋 Батарея")], # <-- Добавлена новая кнопка
+        [KeyboardButton("📋 Список процессов"), KeyboardButton("🔋 Батарея")],
         [KeyboardButton("🔙 Назад")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -60,3 +60,13 @@ def get_shutdown_timer_keyboard():
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
+
+# НОВАЯ КЛАВИАТУРА ДЛЯ ИГРОВОГО РЕЖИМА
+def get_game_keyboard():
+    keyboard = [
+        [KeyboardButton("🚛 Euro Truck Simulator 2")],
+        [KeyboardButton("⚔️ Assassins Creed Brotherhood")],
+        [KeyboardButton("⚔️ Assassin's Creed Revelations")],
+        [KeyboardButton("🔙 Назад")]
+    ]
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
