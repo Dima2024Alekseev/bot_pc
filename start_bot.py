@@ -7,7 +7,7 @@ from datetime import datetime
 import os
 
 # Путь к лог-файлу в папке пользователя
-LOG_FILE = os.path.join(os.path.expanduser("~"), "bot_launcher.log")
+LOG_FILE = r"C:\Users\aleks\Desktop\bot\bot_launcher.log"
 
 def log(message):
     try:

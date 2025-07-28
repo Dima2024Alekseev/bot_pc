@@ -11,7 +11,7 @@ from telegram.ext import (
 )
 from telegram import Update
 from config import BOT_TOKEN
-from handlers import start_help, pc_control, monitoring, cleanup, screenshots
+from handlers import start_help, pc_control, monitoring, cleanup, screenshots, ai_responses
 from utils.decorators import restricted # Импортируем restricted, если он не импортирован в самом файле (лучше явно)
 from utils.state_manager import load_bot_state, save_bot_state # Добавлено
 
@@ -145,6 +145,7 @@ def main() -> None:
     application.add_handler(CommandHandler("lock", pc_control.lock_pc))
     application.add_handler(CommandHandler("battery", monitoring.battery_status))
     application.add_handler(CommandHandler("toggle_battery_monitoring", toggle_battery_monitoring))
+    application.add_handler(CommandHandler("ask", ai_responses.ask_deepseek))
 
     # Обработчик для текстовых кнопок
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start_help.button_handler))
