@@ -45,15 +45,71 @@ pip install -r requirements.txt
 Настройте шифрование и config.json. Ваш бот использует шифрование для защиты конфиденциальных данных, таких как токены и ID чата. Сначала сгенерируйте ключ шифрования, создав файл generate_key.py в корневой папке проекта:
 
 ```python
-# generate_key.py
-from cryptography.fernet import Fernet
+# config_generator.py
 import os
+import json
+from cryptography.fernet import Fernet
 
-key = Fernet.generate_key()
-with open("encryption_key.key", "wb") as key_file:
-    key_file.write(key)
-print("Ключ шифрования сгенерирован в encryption_key.key")
-print("ОБЯЗАТЕЛЬНО СОХРАНИТЕ ЭТОТ ФАЙЛ В НАДЕЖНОМ МЕСТЕ!")
+def generate_key():
+    """Генерирует ключ шифрования и сохраняет его в файл."""
+    key = Fernet.generate_key()
+    with open("encryption_key.key", "wb") as key_file:
+        key_file.write(key)
+    print("Ключ шифрования сгенерирован и сохранен в 'encryption_key.key'")
+    return key
+
+def load_key():
+    """Загружает ключ шифрования из файла."""
+    try:
+        with open("encryption_key.key", "rb") as key_file:
+            key = key_file.read()
+        return key
+    except FileNotFoundError:
+        return None # Ключа нет, нужно сгенерировать
+
+def encrypt_data(data, key):
+    """Шифрует строку данных."""
+    f = Fernet(key)
+    return f.encrypt(data.encode()).decode()
+
+def main():
+    print("--- Настройка шифрованных данных бота ---")
+
+    # --- 1. Генерация/загрузка ключа шифрования ---
+    key = load_key()
+    if key is None:
+        key = generate_key()
+
+    # --- 2. Шифрование токена и ID чата ---
+    bot_token = input("Введите токен вашего Telegram бота (ОБЯЗАТЕЛЬНО): ")
+    allowed_chat_id_str = input("Введите ID разрешенного чата (обычно ваш ID пользователя, ОБЯЗАТЕЛЬНО): ")
+    deepseek_api_key = input("Введите ваш DeepSeek API Key (ОБЯЗАТЕЛЬНО для AI функционала): ") # ДОБАВЛЕНО
+
+    try:
+        allowed_chat_id = int(allowed_chat_id_str)
+    except ValueError:
+        print("Ошибка: ID чата должен быть числом.")
+        return
+
+    encrypted_token = encrypt_data(bot_token, key)
+    encrypted_chat_id = encrypt_data(str(allowed_chat_id), key)
+    encrypted_deepseek_api_key = encrypt_data(deepseek_api_key, key) # ДОБАВЛЕНО
+
+    config_data = {
+        "BOT_TOKEN": encrypted_token,
+        "ALLOWED_CHAT_ID": encrypted_chat_id,
+        "DEEPSEEK_API_KEY": encrypted_deepseek_api_key # ДОБАВЛЕНО
+    }
+
+    # Сохраняем зашифрованные данные в config.json
+    with open("config.json", "w") as f:
+        json.dump(config_data, f, indent=4)
+    print("\nВаши BOT_TOKEN, ALLOWED_CHAT_ID и DEEPSEEK_API_KEY зашифрованы и сохранены в 'config.json'.")
+    print("Убедитесь, что файл 'encryption_key.key' добавлен в .gitignore и надежно хранится.")
+    print("Вы можете удалить 'config_generator.py' после использования.")
+
+if __name__ == "__main__":
+    main()
 ```
 
 Запустите его из терминала:
