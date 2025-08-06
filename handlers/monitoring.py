@@ -369,7 +369,7 @@ async def check_battery_level(context: ContextTypes.DEFAULT_TYPE) -> None:
         ):
             await context.bot.send_message(
                 chat_id=chat_id,
-                text=f"⚠️ *Внимание!* Низкий заряд батареи: `{battery.percent:.1f}%`\\. Подключите зарядное устройство\\.",
+                text=f"⚠️ \\*Внимание\\!\\* Низкий заряд батареи: `{battery.percent:.1f}%`\\. Подключите зарядное устройство\\.",
                 parse_mode="MarkdownV2",
             )
             context.bot_data["battery_low_notified"] = True
