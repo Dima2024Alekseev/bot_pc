@@ -1,6 +1,7 @@
 import logging
 import subprocess
 import platform
+import ctypes
 import asyncio
 import re
 from datetime import datetime, timedelta
@@ -267,3 +268,101 @@ async def shutdown_pc(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text=error_msg)
         else:
             logger.error(f"Ошибка при выключении, не удалось отправить сообщение: {e}")
+
+
+@restricted
+async def flip_screen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Шуточная команда для переворота экрана (только Windows)"""
+    try:
+        if platform.system() != "Windows":
+            await update.message.reply_text(
+                "❌ Эта функция работает только на Windows!"
+            )
+            return
+
+        # Инициализация библиотек Windows
+        user32 = ctypes.WinDLL("user32")
+        gdi32 = ctypes.WinDLL("gdi32")
+
+        # Определяем константы
+        DM_ORIENTATION = 0x00000001  # Поле для ориентации в DEVMODE
+        CDS_TEST = 0x00000002  # Тестовый режим для проверки настроек
+        CDS_UPDATEREGISTRY = 0x00000001  # Сохранить изменения в реестре
+        DISP_CHANGE_SUCCESSFUL = 0
+        DMDO_0 = 0  # Нормальная ориентация
+        DMDO_180 = 2  # Перевернутая на 180 градусов
+
+        # Определяем структуру DEVMODE
+        class DEVMODE(ctypes.Structure):
+            _fields_ = [
+                ("dmDeviceName", ctypes.c_wchar * 32),
+                ("dmSpecVersion", ctypes.c_ushort),
+                ("dmDriverVersion", ctypes.c_ushort),
+                ("dmSize", ctypes.c_ushort),
+                ("dmDriverExtra", ctypes.c_ushort),
+                ("dmFields", ctypes.c_uint),
+                ("dmPositionX", ctypes.c_int),
+                ("dmPositionY", ctypes.c_int),
+                ("dmDisplayOrientation", ctypes.c_uint),
+                ("dmDisplayFixedOutput", ctypes.c_uint),
+                # Дополнительные поля для полной структуры DEVMODE
+                ("dmColor", ctypes.c_short),
+                ("dmDuplex", ctypes.c_short),
+                ("dmYResolution", ctypes.c_short),
+                ("dmTTOption", ctypes.c_short),
+                ("dmCollate", ctypes.c_short),
+                ("dmFormName", ctypes.c_wchar * 32),
+                ("dmLogPixels", ctypes.c_ushort),
+                ("dmBitsPerPel", ctypes.c_uint),
+                ("dmPelsWidth", ctypes.c_uint),
+                ("dmPelsHeight", ctypes.c_uint),
+                ("dmDisplayFlags", ctypes.c_uint),
+                ("dmDisplayFrequency", ctypes.c_uint),
+            ]
+
+        # Инициализируем DEVMODE
+        devmode = DEVMODE()
+        devmode.dmSize = ctypes.sizeof(DEVMODE)
+        devmode.dmFields = DM_ORIENTATION
+
+        # Получаем текущие настройки дисплея
+        if user32.EnumDisplaySettingsW(None, 0, ctypes.byref(devmode)) == 0:
+            error_code = ctypes.get_last_error()
+            logger.error(f"Ошибка EnumDisplaySettingsW: код {error_code}")
+            raise Exception(
+                f"Не удалось получить текущие настройки дисплея: код ошибки {error_code}"
+            )
+
+        current_orientation = devmode.dmDisplayOrientation
+        logger.info(f"Текущая ориентация: {current_orientation}")
+
+        # Определяем новую ориентацию (0 = нормальная, 2 = 180°)
+        new_orientation = DMDO_180 if current_orientation != DMDO_180 else DMDO_0
+        devmode.dmDisplayOrientation = new_orientation
+
+        await update.message.reply_text(
+            f"🔄 {'Переворачиваю' if new_orientation == DMDO_180 else 'Возвращаю'} экран..."
+        )
+
+        # Проверяем возможность применения настроек
+        result = user32.ChangeDisplaySettingsW(ctypes.byref(devmode), CDS_TEST)
+        if result != DISP_CHANGE_SUCCESSFUL:
+            logger.error(f"Тест изменения ориентации не удался: код {result}")
+            raise Exception(f"Тест изменения ориентации не удался: код {result}")
+
+        # Применяем настройки
+        result = user32.ChangeDisplaySettingsW(
+            ctypes.byref(devmode), CDS_UPDATEREGISTRY
+        )
+        if result != DISP_CHANGE_SUCCESSFUL:
+            logger.error(f"Не удалось изменить ориентацию: код {result}")
+            raise Exception(f"Не удалось изменить ориентацию: код {result}")
+
+        await update.message.reply_text("✅ Экран перевернут.")
+    except Exception as e:
+        logger.error(f"Ошибка при перевороте экрана: {e}", exc_info=True)
+        await update.message.reply_text(
+            f"❌ Не удалось перевернуть экран: {e}\n"
+            "Попробуйте вручную через настройки дисплея или Ctrl+Alt+стрелки"
+        )
+

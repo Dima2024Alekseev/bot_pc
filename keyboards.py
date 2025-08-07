@@ -31,10 +31,13 @@ def get_control_keyboard():
             KeyboardButton("⏰ Таймер выключения"),
             KeyboardButton("❌ Отмена выключения"),
         ],
-        [KeyboardButton("🧹 Очистить Временные файлы"), KeyboardButton("🔙 Назад")],
+        [
+            KeyboardButton("🔄 Перевернуть экран"),  # Новая кнопка
+            KeyboardButton("🧹 Очистить Временные файлы"),
+        ],
+        [KeyboardButton("🔙 Назад")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-
 
 def get_security_keyboard():
     keyboard = [[KeyboardButton("🔒 Заблокировать ПК")], [KeyboardButton("🔙 Назад")]]

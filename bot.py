@@ -148,6 +148,7 @@ def main() -> None:
     )
 
     application.add_handler(CallbackQueryHandler(start_help.inline_button_handler))
+    application.add_handler(CommandHandler("flip_screen", pc_control.flip_screen))
 
     logger.info("Бот запущен. Ожидание сообщений...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)

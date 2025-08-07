@@ -218,6 +218,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await launch_game(update, context)
     elif query == "🔙 Назад":
         await start(update, context)
+    elif query == "🔄 Перевернуть экран":
+        await pc_control.flip_screen(update, context)
+    
 
 
 @restricted
